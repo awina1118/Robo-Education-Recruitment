@@ -1,0 +1,267 @@
+% 4.5.2 授课型幻灯片 Demo：STM32 嵌入式入门 第 1 讲
+% 预计授课时长约 10 分钟（13 页，平均每页约 45 秒，代码页稍长）
+% 编译：XeLaTeX（VS Code 里打开本文件保存即可）
+\documentclass[aspectratio=169,11pt]{ctexbeamer}
+\usetheme{Madrid}
+\setbeamertemplate{navigation symbols}{}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,shapes.geometric}
+\lstset{basicstyle=\ttfamily\scriptsize, columns=fullflexible, frame=single,
+        rulecolor=\color{gray!50}, backgroundcolor=\color{gray!5},
+        keywordstyle=\color{blue!60!black}, commentstyle=\color{green!40!black},
+        escapeinside={(*@}{@*)}}
+\graphicspath{{../assets/}}
+
+\title{STM32 嵌入式入门}
+\subtitle{第 1 讲 \quad GPIO：点亮第一盏灯}
+\author{姓名}
+\institute{浙江大学学生机器人协会 · 教学部}
+\date{}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\begin{frame}{本讲目标}
+  学完这 10 分钟，你应该能够：
+  \begin{enumerate}
+    \item 说出单片机是什么、STM32 和 Arduino 是什么关系
+    \item 看懂 \texttt{STM32F103C8T6} 这串型号
+    \item 知道 GPIO 输出高低电平是怎么控制 LED 的
+    \item 用 CubeMX + HAL 库写出让 LED 闪烁的程序
+  \end{enumerate}
+  \vspace{1em}
+  \begin{block}{本讲用到的硬件}
+    STM32F103C8T6 最小系统板（“蓝色小板”） + ST-Link V2 下载器
+  \end{block}
+\end{frame}
+
+\section{认识 STM32}
+
+\begin{frame}{单片机是什么？}
+  \begin{columns}[T]
+    \column{0.5\textwidth}
+    \textbf{单片机 = 把一台电脑做进一颗芯片}
+    \begin{itemize}
+      \item CPU：执行指令
+      \item Flash：存程序（断电不丢）
+      \item RAM：存变量
+      \item \alert{外设}：GPIO、定时器、串口、ADC……\\负责和外部世界打交道
+    \end{itemize}
+    \vspace{0.5em}
+    Arduino UNO 上的 ATmega328P 也是单片机；STM32 是 ST 公司基于 ARM Cortex-M 内核的一系列单片机。
+    \column{0.46\textwidth}
+    \centering\small
+    \begin{tabular}{lcc}
+      \toprule
+       & UNO & F103C8T6 \\
+      \midrule
+      内核 & 8 位 AVR & 32 位 Cortex-M3 \\
+      主频 & 16\,MHz & 72\,MHz \\
+      Flash & 32\,KB & 64\,KB \\
+      RAM & 2\,KB & 20\,KB \\
+      I/O 电平 & 5V & \alert{3.3V} \\
+      \bottomrule
+    \end{tabular}
+    \vspace{0.5em}
+
+    性能更强、外设更多，\\是机器人比赛中最常见的主控
+  \end{columns}
+\end{frame}
+
+\begin{frame}{读懂型号：STM32F103C8T6}
+  \centering
+  \begin{tikzpicture}[every node/.style={font=\large\ttfamily}]
+    \node (a) {STM32};
+    \node[right=0pt of a, text=red!70!black] (b) {F};
+    \node[right=0pt of b, text=blue!70!black] (c) {103};
+    \node[right=0pt of c, text=green!50!black] (d) {C};
+    \node[right=0pt of d, text=orange!80!black] (e) {8};
+    \node[right=0pt of e, text=purple] (f) {T};
+    \node[right=0pt of f, text=gray] (g) {6};
+    \begin{scope}[every node/.style={font=\footnotesize, align=center}, ->, >=Stealth]
+      \draw (a.south) -- ++(0,-1.0) node[below] {ST 的 32 位\\单片机};
+      \draw[red!70!black] (b.south) -- ++(-0.3,-2.2) node[below] {通用型};
+      \draw[blue!70!black] (c.south) -- ++(0.2,-1.0) node[below] {F1 系列\\基础型};
+      \draw[green!50!black] (d.south) -- ++(0.6,-2.2) node[below] {48 引脚};
+      \draw[orange!80!black] (e.south) -- ++(1.4,-1.0) node[below] {64KB\\Flash};
+      \draw[purple] (f.south) -- ++(2.3,-2.2) node[below] {LQFP 封装};
+      \draw[gray] (g.south) -- ++(3.4,-1.0) node[below] {工业级温度\\$-40$ \textasciitilde{} 85°C};
+    \end{scope}
+  \end{tikzpicture}
+  \vspace{0.5em}
+
+  \small 以后拿到任何一个 STM32，先看型号就知道它大概有多少引脚、多大存储。
+\end{frame}
+
+\begin{frame}{开发流程}
+  \centering
+  \begin{tikzpicture}[node distance=0.45cm,
+      box/.style={draw, rounded corners, fill=blue!8, minimum height=0.9cm, text width=2.1cm, align=center, font=\small,
+                  execute at begin node={\xeCJKsetup{CJKglue={\hskip 0pt}}}}]
+    \node[box] (a) {CubeMX\\配置引脚};
+    \node[box, right=of a] (b) {生成\\工程代码};
+    \node[box, right=of b] (c) {在 main.c\\写逻辑};
+    \node[box, right=of c] (d) {编译};
+    \node[box, right=of d] (e) {ST-Link\\烧录运行};
+    \foreach \x/\y in {a/b, b/c, c/d, d/e} \draw[-{Stealth}, thick] (\x) -- (\y);
+  \end{tikzpicture}
+  \vspace{1em}
+  \begin{itemize}
+    \item 工具：\textbf{STM32CubeIDE}（免费，CubeMX 已集成在里面）
+    \item \textbf{CubeMX}：用图形界面点选“这个引脚做什么”，自动生成初始化代码
+    \item \textbf{HAL 库}：ST 官方函数库，类似 Arduino 的 \texttt{digitalWrite()}
+  \end{itemize}
+\end{frame}
+
+\section{GPIO 输出}
+
+\begin{frame}{GPIO：通用输入输出口}
+  \begin{columns}[T]
+    \column{0.55\textwidth}
+    \begin{itemize}
+      \item GPIO = General Purpose Input/Output
+      \item 引脚按组命名：\texttt{PA0}--\texttt{PA15}、\texttt{PB0}--\texttt{PB15}、\texttt{PC13} 等
+      \item 配置成\textbf{输出}时，程序可以让它变成：
+        \begin{itemize}
+          \item 高电平：3.3V（逻辑 1）
+          \item 低电平：0V（逻辑 0）
+        \end{itemize}
+      \item 配置成\textbf{输入}时，可以读出外部是高还是低（下一讲：按键）
+    \end{itemize}
+    \column{0.4\textwidth}
+    \begin{block}{两种输出模式}
+      \small
+      \textbf{推挽}：能主动输出高和低，\alert{驱动 LED 用这个}\\[3pt]
+      \textbf{开漏}：只能主动拉低，高电平要靠外部上拉电阻（用于 I²C 等总线）
+    \end{block}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{板载 LED 是怎么接的？}
+  \begin{columns}[c]
+    \column{0.45\textwidth}
+    \centering
+    \begin{tikzpicture}[thick, scale=0.9]
+      \node[left] at (0,3) {3.3V};
+      \draw (0,3) -- (1,3);
+      \draw (1,3) -- (1,2.6);
+      \draw (0.85,2.6) rectangle (1.15,1.8);
+      \node[right] at (1.2,2.2) {\small 电阻};
+      \draw (1,1.8) -- (1,1.4);
+      \draw (0.7,1.4) -- (1.3,1.4);
+      \draw (0.7,1.4) -- (1,0.9) -- (1.3,1.4);
+      \draw (0.7,0.9) -- (1.3,0.9);
+      \draw[->, orange] (1.4,1.2) -- (1.8,1.5);
+      \draw[->, orange] (1.4,1.0) -- (1.8,1.3);
+      \node[right] at (1.8,1.1) {\small LED};
+      \draw (1,0.9) -- (1,0.3) -- (0,0.3);
+      \node[left] at (0,0.3) {\texttt{PC13}};
+    \end{tikzpicture}
+    \column{0.52\textwidth}
+    \begin{itemize}
+      \item LED 的正极接 3.3V，负极经 \texttt{PC13} 引出
+      \item \texttt{PC13} 输出\alert{低电平}：两端有电压差 → 电流流过 → \textbf{灯亮}
+      \item \texttt{PC13} 输出高电平：两端都是 3.3V → 没有电流 → 灯灭
+    \end{itemize}
+    \begin{alertblock}{记住}
+      蓝色小板的板载 LED 是\textbf{低电平点亮}，和直觉相反。写代码前先看原理图！
+    \end{alertblock}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{在 CubeMX 里配置}
+  \begin{enumerate}
+    \item 新建工程，芯片选 \texttt{STM32F103C8Tx}
+    \item \textbf{System Core → SYS → Debug} 选 \texttt{Serial Wire}\\
+      \small\textcolor{gray}{（不选的话，第二次下载时 ST-Link 会连不上芯片）}\normalsize
+    \item \textbf{System Core → RCC → HSE} 选 \texttt{Crystal/Ceramic Resonator}，时钟树里把主频设为 72\,MHz
+    \item 在芯片图上点击 \texttt{PC13}，选 \texttt{GPIO\_Output}
+    \item 右侧 GPIO 设置里：模式 \texttt{Output Push Pull}，给它起个名字 \texttt{LED}
+    \item 保存（Ctrl+S），自动生成代码
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}[fragile]{写代码：让 LED 闪烁}
+\begin{lstlisting}[language=C]
+int main(void)
+{
+  HAL_Init();               // HAL 库初始化
+  SystemClock_Config();     // 时钟配置（CubeMX 生成）
+  MX_GPIO_Init();           // GPIO 初始化（CubeMX 生成）
+
+  while (1)
+  {
+    /* USER CODE BEGIN 3 */
+    HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);  // 低电平：亮
+    HAL_Delay(500);                                             // 等待 500 ms
+    HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);    // 高电平：灭
+    HAL_Delay(500);
+    /* USER CODE END 3 */
+  }
+}
+\end{lstlisting}
+  \small
+  \begin{itemize}
+    \item 也可以用一行 \texttt{HAL\_GPIO\_TogglePin(LED\_GPIO\_Port, LED\_Pin);} 翻转电平
+    \item \texttt{LED\_GPIO\_Port}、\texttt{LED\_Pin} 是 CubeMX 根据你起的名字自动生成的宏
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{HAL 函数背后发生了什么？}
+  \texttt{HAL\_GPIO\_WritePin} 最终做的事情只有一行：写 \texttt{BSRR} 寄存器
+\begin{lstlisting}[language=C]
+GPIOC->BSRR = (1 << 13);          // 低 16 位写 1：PC13 置高（灯灭）
+GPIOC->BSRR = (1 << (13 + 16));   // 高 16 位写 1：PC13 置低（灯亮）
+\end{lstlisting}
+  \begin{itemize}
+    \item 寄存器就是芯片里一个个有地址的“开关”，往里写数，硬件就照做
+    \item HAL 库帮我们把“写哪个地址、哪一位”包装成了好读的函数
+    \item 好处：可读、可移植；代价：多了几层函数调用，速度稍慢
+  \end{itemize}
+  \vspace{0.3em}
+  \small 调试时可以在 CubeIDE 的 SFRs 窗口里实时看到 \texttt{GPIOC} 寄存器的值变化。
+\end{frame}
+
+\section{常见错误}
+
+\begin{frame}{新手最常踩的坑}
+  \begin{alertblock}{代码写了，重新生成后不见了}
+    自己的代码必须写在 \texttt{/* USER CODE BEGIN */} 和 \texttt{/* USER CODE END */} 之间，否则 CubeMX 重新生成时会被覆盖。
+  \end{alertblock}
+  \begin{alertblock}{第二次下载失败：No target connected}
+    忘了把 SYS → Debug 设为 Serial Wire。按住板上 RESET 键点下载、看到连接后松开即可恢复。
+  \end{alertblock}
+  \begin{alertblock}{程序没问题，灯就是不亮 / 一直亮}
+    检查 LED 是高电平亮还是低电平亮；检查引脚名是否和原理图一致。
+  \end{alertblock}
+\end{frame}
+
+\section{总结}
+
+\begin{frame}{总结与课后练习}
+  \begin{block}{三句话回顾}
+    \begin{enumerate}
+      \item STM32 是 32 位单片机，比 Arduino 更强，I/O 是 3.3V
+      \item GPIO 输出就是让引脚变成 3.3V 或 0V；蓝色小板的 LED 低电平点亮
+      \item 开发流程：CubeMX 配置 → 生成代码 → USER CODE 区写逻辑 → 编译烧录
+    \end{enumerate}
+  \end{block}
+  \textbf{课后练习}（任选其一，下节课抽查）：
+  \begin{itemize}
+    \item 在面包板上接 4 个 LED，实现\textbf{流水灯}
+    \item 用板载 LED 闪出摩尔斯电码 \textbf{SOS}（短短短 长长长 短短短）
+  \end{itemize}
+  \small 下一讲预告：GPIO 输入——用按键控制 LED，以及为什么需要“消抖”。
+\end{frame}
+
+\begin{frame}
+  \centering\Huge 谢谢！\\[1em]
+  \normalsize 课件与示例工程：协会 GitHub 仓库 \texttt{slides/}
+\end{frame}
+
+\end{document}
